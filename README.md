@@ -25,7 +25,7 @@ Set stack env vars `POSTGRES_PASSWORD` and `HONCHO_DB_PASSWORD` (see `.env.examp
 
 | DB | Role | Extensions | Connection string |
 |---|---|---|---|
-| honcho | honcho | vector | `postgresql+psycopg://honcho:<pw>@postgres:5432/honcho` |
+| honcho | honcho | vector, pg_trgm, btree_gin | `postgresql+psycopg://honcho:<pw>@postgres:5432/honcho` |
 
 The init script (`configs.initdb-honcho`) runs only on first start with an empty volume.
 To add a tenant later, run the SQL manually:
