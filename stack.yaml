@@ -1,0 +1,85 @@
+# PostgreSQL 18 + pgvector — shared DB stack (first tenant: Honcho)
+# Deploy: Portainer > Stacks > Add stack > Repository (dlplab/docker-stack-postgres, stack.yaml)
+# Required stack env vars: POSTGRES_PASSWORD, HONCHO_DB_PASSWORD (see .env.example)
+
+name: postgres
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg18-trixie
+    container_name: postgres
+    hostname: postgres
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: postgres
+      # builtin provider: no glibc/ICU collation drift across image/OS upgrades (PG17+)
+      POSTGRES_INITDB_ARGS: "--locale-provider=builtin --locale=C.UTF-8 --encoding=UTF8 --auth-host=scram-sha-256"
+      HONCHO_DB_PASSWORD: ${HONCHO_DB_PASSWORD:?HONCHO_DB_PASSWORD is required}
+      TZ: UTC
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - maintenance_work_mem=256MB   # pgvector HNSW index builds
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_connections=100
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - log_min_duration_statement=1000
+    configs:
+      - source: initdb-honcho
+        target: /docker-entrypoint-initdb.d/10-honcho.sh
+    volumes:
+      # PG18 images: mount the parent dir; PGDATA is /var/lib/postgresql/18/docker
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - postgres
+    # Uncomment for host-local admin access (psql/pg_dump from the host)
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+# Runs once, on first init of an empty data volume only.
+configs:
+  initdb-honcho:
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      psql -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d postgres \
+        -v pw="$$HONCHO_DB_PASSWORD" <<'SQL'
+      CREATE ROLE honcho LOGIN PASSWORD :'pw';
+      CREATE DATABASE honcho OWNER honcho;
+      SQL
+      psql -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d honcho <<'SQL'
+      CREATE EXTENSION IF NOT EXISTS vector;
+      REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+      GRANT ALL ON SCHEMA public TO honcho;
+      SQL
+
+volumes:
+  postgres_data:
+    name: postgres_data
+
+networks:
+  # Shared DB network: client stacks join it as `external: true, name: postgres`
+  postgres:
+    name: postgres
